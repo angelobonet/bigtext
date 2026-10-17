@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="Show a large, readable message to someone nearby.">
+  <meta name="color-scheme" content="dark light">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" type="image/png" href="./icon-192.png">
+  <title>BigText</title>
+  <style>
+    :root{font:16px/1.45 system-ui,-apple-system,Roboto,sans-serif;color-scheme:dark;background:#111827;color:#f9fafb}
+    *{box-sizing:border-box}body{margin:0;min-height:100dvh}button,textarea{font:inherit}button{cursor:pointer;touch-action:manipulation}
+    [hidden]{display:none!important}.editor{width:min(100%,660px);margin:auto;padding:clamp(20px,5vw,36px);padding-top:max(24px,env(safe-area-inset-top));}
+    h1{margin:0;font-size:1.9rem;letter-spacing:-.04em}.muted{color:#aeb9cd;font-size:.9rem;margin:0 0 32px}
+    label{display:block;font-size:.92rem;font-weight:650;margin-bottom:9px}
+    textarea{display:block;width:100%;min-height:180px;padding:17px;border:1px solid #55647d;border-radius:15px;background:#1f2937;color:#fff;font-size:1.35rem;line-height:1.35;resize:vertical}
+    .input-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:9px}.input-heading label{margin:0}.clear-button{border:1px solid #687587;background:#263448;color:#f9fafb;border-radius:9px;padding:8px 12px;font-size:.88rem}textarea:focus-visible,button:focus-visible{outline:3px solid #a4bcff;outline-offset:3px}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin:19px 0 26px}.swatch{border:1px solid #687587;background:#263448;color:#f9fafb;border-radius:10px;padding:10px 13px;font-size:.88rem}
+    .swatch[aria-pressed="true"]{outline:2px solid #9cbbff;outline-offset:1px}
+    .primary{display:block;width:100%;padding:17px;border-radius:14px;background:#6286f6;color:#08122c;border:0;font-weight:750;font-size:1.1rem}
+    .hint{margin-top:15px;text-align:center;color:#aeb9cd;font-size:.83rem}
+    .screen{position:fixed;inset:0;display:flex;flex-direction:column;background:#050505;color:white;min-height:100dvh;z-index:2}
+    .screen.light{background:#fff;color:#101010}.screen.yellow{background:#050505;color:#ffe862}
+    .message{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden;padding:clamp(14px,3vw,45px);touch-action:none;cursor:default;user-select:none;-webkit-user-select:none}
+    .message-text{display:block;width:100%;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;font-size:20px;font-weight:750;line-height:1.08;letter-spacing:-.025em}
+    .toolbar{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));background:rgba(125,125,125,.16)}
+    .toolbar .size-tools{display:flex;gap:5px;align-items:center}.toolbar .size-tools button{padding:10px 11px}.toolbar button{background:rgba(128,128,128,.25);border:0;border-radius:9px;color:inherit;padding:11px 14px;font-size:.9rem;font-weight:600}
+    .screen:fullscreen{width:100vw;height:100dvh}.screen:fullscreen .toolbar{opacity:.08;transition:opacity .2s}.screen:fullscreen .toolbar:hover,.screen:fullscreen .toolbar:focus-within{opacity:1}
+    @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+  <main id="editor" class="editor">
+    <h1>BigText</h1><p class="muted">Say something without speaking.</p>
+    <div class="input-heading"><label for="input">Your message</label><button id="clear" class="clear-button" type="button">Clear text ×</button></div>
+    <textarea id="input" maxlength="1000" spellcheck="true" autofocus placeholder="Type a message…">Do you want to leave?</textarea>
+    <label style="margin-top:22px">Display style</label>
+    <div class="controls" role="group" aria-label="Display style">
+      <button class="swatch" type="button" data-style="dark" aria-pressed="true">White on black</button>
+      <button class="swatch" type="button" data-style="light" aria-pressed="false">Black on white</button>
+      <button class="swatch" type="button" data-style="yellow" aria-pressed="false">Yellow on black</button>
+    </div>
+    <button id="show" class="primary" type="button">Display message ↗</button>
+    <p class="hint">In display mode, pinch with two fingers or use A− / A+ to resize. Use the Edit button to return to the editor.</p>
+  </main>
+  <section id="screen" class="screen" hidden aria-label="Large message display">
+    <div id="message" class="message"><span id="message-text" class="message-text"></span></div>
+    <div class="toolbar"><button id="edit" type="button">← Edit</button><div class="size-tools" role="group" aria-label="Message text size"><button id="smaller" type="button" aria-label="Smaller text">A−</button><button id="fit" type="button" title="Fit message to screen">Fit</button><button id="larger" type="button" aria-label="Larger text">A+</button></div><button id="fullscreen" type="button">⛶</button></div>
+  </section>
+  <script>
+  (() => {
+    'use strict';
+    const $ = id => document.getElementById(id);
+    const input=$('input'), editor=$('editor'), screen=$('screen'), message=$('message'), content=$('message-text');
+    const styles=['dark','light','yellow'];
+    let chosen='dark', scale=1, fittedFontSize=20;
+    try {
+      const saved=JSON.parse(localStorage.getItem('bigtext-settings')||'{}');
+      if(typeof saved.message==='string')input.value=saved.message;
+      if(styles.includes(saved.style))chosen=saved.style;
+      if(Number.isFinite(saved.scale))scale=Math.min(2,Math.max(.25,saved.scale));
+    }catch{}
+    function save(){try{localStorage.setItem('bigtext-settings',JSON.stringify({message:input.value,style:chosen,scale}));}catch{}}
+    function setStyle(value){chosen=value;screen.classList.toggle('light',value==='light');screen.classList.toggle('yellow',value==='yellow');document.querySelectorAll('[data-style]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.style===value)));save();}
+    document.querySelectorAll('[data-style]').forEach(b=>b.addEventListener('click',()=>setStyle(b.dataset.style)));
+    setStyle(chosen);
+    // Find the largest font that fits both height and width, including wrapped/newline text.
+    function fit(){
+      if(screen.hidden)return;
+      const availableWidth=message.clientWidth-parseFloat(getComputedStyle(message).paddingLeft)-parseFloat(getComputedStyle(message).paddingRight);
+      const availableHeight=message.clientHeight-parseFloat(getComputedStyle(message).paddingTop)-parseFloat(getComputedStyle(message).paddingBottom);
+      let low=8,high=Math.max(8,Math.min(600,Math.max(availableHeight,availableWidth))),best=8;
+      for(let i=0;i<14;i++){
+        const mid=(low+high)/2;
+        content.style.fontSize=mid+'px';
+        if(content.scrollHeight<=availableHeight+1&&content.scrollWidth<=availableWidth+1){best=mid;low=mid;}else{high=mid;}
+      }
+      fittedFontSize=Math.floor(best);
+      applyScale();
+    }
+    function applyScale(){
+      content.style.fontSize=Math.max(8,Math.round(fittedFontSize*scale))+'px';
+    }
+    function setScale(next){scale=Math.max(.25,Math.min(2,next));applyScale();save();}
+    function show(){content.textContent=input.value.trim()||' ';save();editor.hidden=true;screen.hidden=false;requestAnimationFrame(fit);}
+    async function edit(){
+      if(document.fullscreenElement){try{await document.exitFullscreen();}catch{}}
+      screen.hidden=true;editor.hidden=false;input.focus();
+    }
+    $('show').addEventListener('click',show);
+    $('clear').addEventListener('click',()=>{input.value='';save();input.focus();});
+    $('smaller').addEventListener('click',()=>setScale(scale/1.15));
+    $('larger').addEventListener('click',()=>setScale(scale*1.15));
+    $('fit').addEventListener('click',()=>setScale(1));
+    $('edit').addEventListener('click',edit);
+    // Two-finger pinch changes TEXT size rather than zooming the browser page.
+    let pinchDistance=0, pinchStartScale=1;
+    const distance=touches=>Math.hypot(touches[0].clientX-touches[1].clientX,touches[0].clientY-touches[1].clientY);
+    message.addEventListener('touchstart',event=>{
+      if(event.touches.length===2){pinchDistance=distance(event.touches);pinchStartScale=scale;event.preventDefault();}
+    },{passive:false});
+    message.addEventListener('touchmove',event=>{
+      if(event.touches.length>=2&&pinchDistance>0){setScale(pinchStartScale*distance(event.touches)/pinchDistance);event.preventDefault();}
+    },{passive:false});
+    message.addEventListener('touchend',event=>{
+      if(event.touches.length<2)pinchDistance=0;
+    },{passive:false});
+    $('fullscreen').addEventListener('click',async()=>{
+      try{if(document.fullscreenElement)await document.exitFullscreen();else if(screen.requestFullscreen)await screen.requestFullscreen();}catch{};
+      requestAnimationFrame(fit);
+    });
+    input.addEventListener('input',save);
+    document.addEventListener('fullscreenchange',()=>requestAnimationFrame(fit));
+    window.addEventListener('resize',()=>requestAnimationFrame(fit));
+    if(window.ResizeObserver)new ResizeObserver(()=>requestAnimationFrame(fit)).observe(message);
+    window.addEventListener('keydown',e=>{if(e.key==='Escape'&&!screen.hidden&&!document.fullscreenElement)edit();});
+    if('serviceWorker' in navigator && (location.protocol==='https:'||location.hostname==='localhost')){
+      window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+    }
+  })();
+  </script>
+</body>
+</html>
